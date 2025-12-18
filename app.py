@@ -5,8 +5,18 @@ from garminconnect import Garmin
 from google import genai
 import pandas as pd
 
-# --- CONFIGURATION ---
 st.set_page_config(page_title="Coach AI", page_icon="⚡", layout="centered")
+
+# --- CSS POUR FAIRE JOLI ---
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            .stMetric {background-color: #f0f2f6; padding: 10px; border-radius: 10px;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # --- FONCTIONS ---
 @st.cache_data(ttl=3600)
@@ -18,22 +28,22 @@ def get_data():
         client.login()
         
         today = date.today()
-        # On récupère le résumé du jour
         stats_today = client.get_user_summary(today.isoformat())
         
-        # On récupère l'historique
         data_list = []
         for i in range(6, -1, -1):
             d = today - timedelta(days=i)
             d_str = d.isoformat()
             try:
                 day_data = client.get_user_summary(d_str)
+                # ICI : On cherche 'totalSteps' OU 'dailySteps'
+                steps = day_data.get('totalSteps', 0) or day_data.get('dailySteps', 0) or 0
+                
                 data_list.append({
                     "Date": d.strftime("%d/%m"),
-                    "Pas": day_data.get('dailySteps', 0) or 0,
+                    "Pas": steps,
                     "Cœur Repos": day_data.get('restingHeartRate', 0) or 0,
                     "Stress": day_data.get('averageStressLevel', 0) or 0,
-                    "Body Battery": day_data.get('bodyBatteryMostRecentLevel', 0) or 0
                 })
             except:
                 continue
@@ -42,33 +52,36 @@ def get_data():
     except Exception as e:
         return None, str(e)
 
-# --- INTERFACE ---
-st.title(f"⚡ Mon Coach - {date.today().strftime('%d/%m')}")
+# --- APP ---
+st.title(f"⚡ Coach - {date.today().strftime('%d/%m')}")
 
 with st.spinner('Synchronisation...'):
     stats, df_history = get_data()
 
-# Gestion des erreurs de connexion
 if isinstance(df_history, str):
-    st.error(f"Erreur technique : {df_history}")
+    st.error(f"Erreur : {df_history}")
     st.stop()
 
-# --- AFFICHAGE DES CHIFFRES (DEBUG) ---
-# On utilise des .get() sécurisés pour éviter les bugs si la donnée manque
-pas = stats.get('dailySteps', 0)
-sommeil_sec = stats.get('sleepDurationInSeconds', 0)
-stress = stats.get('averageStressLevel', 'N/A')
-body_bat = stats.get('bodyBatteryMostRecentLevel', 'N/A')
+# --- RÉCUPÉRATION INTELLIGENTE DES DONNÉES ---
+# 1. PAS : On cherche totalSteps (votre trouvaille) en priorité
+pas = stats.get('totalSteps', stats.get('dailySteps', 0))
 
-# Calcul du sommeil en heures
+# 2. SOMMEIL : On cherche plusieurs noms possibles
+sommeil_sec = stats.get('sleepDurationInSeconds', stats.get('sleepingSeconds', 0))
+
+# 3. Calcul du sommeil en texte (7h30)
 if sommeil_sec:
     heures = int(sommeil_sec // 3600)
     minutes = int((sommeil_sec % 3600) // 60)
     sommeil_txt = f"{heures}h{minutes}"
 else:
-    sommeil_txt = "Pas de données"
+    sommeil_txt = "--" # Pas de données
 
-# Les Colonnes
+# 4. AUTRES
+stress = stats.get('averageStressLevel', '--')
+body_bat = stats.get('bodyBatteryMostRecentLevel', '--')
+
+# --- AFFICHAGE ---
 col1, col2 = st.columns(2)
 col1.metric("👣 Pas", pas)
 col2.metric("💤 Sommeil", sommeil_txt)
@@ -79,15 +92,32 @@ col4.metric("🔋 Body Battery", body_bat)
 
 st.markdown("---")
 
-# --- GRAPHIQUE ---
-if not df_history.empty:
-    tab1, tab2 = st.tabs(["Pas", "Cœur"])
-    with tab1:
-        st.plotly_chart(px.bar(df_history, x='Date', y='Pas'), use_container_width=True)
-    with tab2:
-        st.plotly_chart(px.line(df_history, x='Date', y='Cœur Repos', markers=True, color_discrete_sequence=['red']), use_container_width=True)
+# --- GRAPHIQUES ---
+tab1, tab2, tab3 = st.tabs(["Activité", "Santé", "Coach IA"])
 
-# --- ZONE DÉTECTIVE (POUR COMPRENDRE LE PROBLÈME) ---
-with st.expander("🔍 VOIR LES DONNÉES BRUTES (DEBUG)"):
-    st.write("Voici exactement ce que Garmin renvoie pour aujourd'hui :")
+with tab1:
+    if not df_history.empty:
+        fig = px.bar(df_history, x='Date', y='Pas', color='Pas', color_continuous_scale='Blues')
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab2:
+    if not df_history.empty:
+        st.caption("Fréquence Cardiaque au Repos")
+        fig = px.line(df_history, x='Date', y='Cœur Repos', markers=True, color_discrete_sequence=['#FF4B4B'])
+        fig.update_layout(yaxis_range=[40, 80])
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab3:
+    if st.button("Lancer l'analyse IA"):
+        with st.spinner("Analyse..."):
+            try:
+                client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
+                prompt = f"Coach sportif. Données: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}. Historique semaine: {df_history.to_string()}. Donne un conseil court."
+                response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
+                st.info(response.text)
+            except Exception as e:
+                st.error(f"Erreur IA: {e}")
+
+# Debugeur (Je le laisse au cas où le sommeil soit encore caché)
+with st.expander("Debug Données"):
     st.json(stats)
