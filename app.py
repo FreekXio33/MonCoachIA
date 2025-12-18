@@ -3,7 +3,7 @@ import plotly.express as px
 import pydeck as pdk
 from datetime import date, timedelta
 from garminconnect import Garmin
-import google.generativeai as genai  # On utilise la librairie standard stable
+import google.generativeai as genai
 import pandas as pd
 import time
 import os
@@ -21,13 +21,12 @@ hide_streamlit_style = """
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- CONFIGURATION IA ---
-# On configure l'IA au début pour être sûr que ça charge
+# --- CONFIGURATION IA SÉCURISÉE ---
 try:
     api_key = st.secrets["GEMINI_KEY"]
     genai.configure(api_key=api_key)
 except Exception as e:
-    st.error("Erreur de clé API. Vérifiez vos secrets Streamlit.")
+    st.error("⚠️ Clé API non trouvée dans les secrets.")
 
 # --- UTILITAIRES ---
 def format_duration(seconds):
@@ -51,7 +50,6 @@ def get_global_data():
     email = st.secrets["GARMIN_EMAIL"]
     password = st.secrets["GARMIN_PASSWORD"]
     
-    # Reconnexion Tenace
     client = None
     for i in range(3):
         try:
@@ -65,10 +63,8 @@ def get_global_data():
 
     try:
         today = date.today()
-        # 1. Résumé du jour
         stats_today = client.get_user_summary(today.isoformat())
         
-        # 2. Historique 7 jours
         data_list = []
         for i in range(6, -1, -1):
             d = today - timedelta(days=i)
@@ -81,7 +77,6 @@ def get_global_data():
             except:
                 continue
         
-        # 3. HISTORIQUE LONG (Depuis le 1er Septembre 2025)
         start_date = date(2025, 9, 1)
         all_activities = client.get_activities_by_date(start_date.isoformat(), today.isoformat())
         
@@ -104,7 +99,7 @@ def get_gps_data(client, activity_id):
         pass
     return None, None
 
-# --- CHARGEMENT ---
+# --- UI PRINCIPALE ---
 st.title("Hey Alexis !")
 with st.spinner('Synchronisation Garmin...'):
     stats, df_history, activities, client = get_global_data()
@@ -114,7 +109,7 @@ if isinstance(df_history, str):
     if st.button("Recharger"): st.rerun()
     st.stop()
 
-# --- KPI DU JOUR ---
+# KPIS
 pas = stats.get('totalSteps', stats.get('dailySteps', 0))
 sommeil_sec = stats.get('sleepDurationInSeconds', stats.get('sleepingSeconds', 0))
 sommeil_txt = format_duration(sommeil_sec)
@@ -130,7 +125,6 @@ col4.metric("🔋 Body Battery", body_bat)
 
 st.markdown("---")
 
-# --- ONGLETS ---
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Activité", "❤️ Santé", "🏅 Cartes & Sport", "🤖 Coach"])
 
 with tab1:
@@ -156,13 +150,11 @@ with tab3:
             duree = format_duration(act['duration'])
             dist_km = f"{act.get('distance', 0) / 1000:.2f} km" if act.get('distance') else ""
             icon = get_activity_icon(type_act)
-            
             with st.expander(f"{icon} {date_start} - {nom}"):
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Durée", duree)
                 c2.metric("Distance", dist_km)
                 c3.metric("BPM", act.get('averageHR', '--'))
-                
                 if act.get('distance', 0) > 0:
                     if st.button(f"🗺️ Voir le parcours", key=f"btn_{act_id}"):
                         with st.spinner("Téléchargement du tracé GPS..."):
@@ -180,43 +172,52 @@ with tab3:
 with tab4:
     st.write("Analyse globale depuis le **1er Septembre 2025**.")
     if st.button("Lancer l'analyse Longue Durée"):
-        with st.spinner("Le coach analyse toute la saison..."):
-            try:
-                # Préparation des données pour l'IA
-                resume_sport = ""
-                total_km = 0
-                count_run = 0
-                count_velo = 0
-                
-                if activities:
-                    for act in activities:
-                        d_date = act['startTimeLocal'][:10]
-                        d_type = act['activityType']['typeKey']
-                        d_dist = act.get('distance', 0) / 1000
-                        d_time = act.get('duration', 0) // 60
-                        
-                        resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
-                        total_km += d_dist
-                        if "running" in str(d_type).lower(): count_run += 1
-                        if "cycling" in str(d_type).lower(): count_velo += 1
+        with st.spinner("Le coach réfléchit..."):
+            
+            # --- PRÉPARATION DU PROMPT ---
+            resume_sport = ""
+            total_km = 0
+            count_run = 0
+            count_velo = 0
+            
+            if activities:
+                # On limite aux 30 dernières activités pour ne pas saturer si le modèle Flash échoue
+                for act in activities[:30]: 
+                    d_date = act['startTimeLocal'][:10]
+                    d_type = act['activityType']['typeKey']
+                    d_dist = act.get('distance', 0) / 1000
+                    d_time = act.get('duration', 0) // 60
+                    resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
+                    total_km += d_dist
+                    if "running" in str(d_type).lower(): count_run += 1
+                    if "cycling" in str(d_type).lower(): count_velo += 1
 
-                prompt = f"""
-                Tu es mon coach sportif personnel Alexis.
-                Données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
-                
-                HISTORIQUE (Sept 2025 à ce jour) :
-                STATS : {total_km:.1f} km total / {count_run} Runs / {count_velo} Vélo.
-                LISTE :
-                {resume_sport}
-                
-                MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
-                """
-                
-                # APPEL IA (MÉTHODE STABLE)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(prompt)
-                
-                st.markdown(response.text)
-                
-            except Exception as e:
-                st.error(f"Erreur IA détaillée : {e}")
+            prompt = f"""
+            Tu es mon coach sportif.
+            Données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
+            HISTORIQUE RÉCENT : {total_km:.1f} km total / {count_run} Runs.
+            LISTE :
+            {resume_sport}
+            
+            Analyse ma forme actuelle et donne un conseil court.
+            """
+
+            # --- LOGIQUE ANTI-ERREUR (FALLBACK) ---
+            model_names = ["gemini-1.5-flash", "gemini-pro"] # On tente Flash, sinon Pro
+            response_text = None
+            
+            for model_name in model_names:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(prompt)
+                    response_text = response.text
+                    st.success(f"Analyse générée avec le modèle : {model_name}")
+                    break # Si ça marche, on sort de la boucle
+                except Exception as e:
+                    print(f"Échec avec {model_name}: {e}")
+                    continue # Sinon on essaie le suivant
+            
+            if response_text:
+                st.markdown(response_text)
+            else:
+                st.error("Désolé, tous les modèles d'IA sont temporairement indisponibles.")
