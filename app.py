@@ -127,4 +127,91 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Activité", "❤️ Santé", "🏅 Carte
 
 with tab1:
     if not df_history.empty:
-        fig = px.bar(df_history, x='Date', y
+        fig = px.bar(df_history, x='Date', y='Pas', color='Pas', color_continuous_scale='Blues')
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab2:
+    if not df_history.empty:
+        fig = px.line(df_history, x='Date', y='Body Battery', markers=True, color_discrete_sequence=['#2ecc71'])
+        fig.update_layout(yaxis_range=[0, 100])
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab3:
+    st.caption("Vos 5 dernières séances (parmi tout l'historique)")
+    if activities:
+        recent_activities = activities[:5] 
+        for act in recent_activities:
+            nom = act['activityName']
+            act_id = act['activityId']
+            type_act = act['activityType']['typeKey']
+            date_start = act['startTimeLocal'][:10]
+            duree = format_duration(act['duration'])
+            dist_km = f"{act.get('distance', 0) / 1000:.2f} km" if act.get('distance') else ""
+            icon = get_activity_icon(type_act)
+            
+            with st.expander(f"{icon} {date_start} - {nom}"):
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Durée", duree)
+                c2.metric("Distance", dist_km)
+                c3.metric("BPM", act.get('averageHR', '--'))
+                
+                if act.get('distance', 0) > 0:
+                    if st.button(f"🗺️ Voir le parcours", key=f"btn_{act_id}"):
+                        with st.spinner("Téléchargement du tracé GPS..."):
+                            path_data, center = get_gps_data(client, act_id)
+                            if path_data:
+                                view_state = pdk.ViewState(latitude=center[1], longitude=center[0], zoom=11, pitch=0)
+                                layer = pdk.Layer(type="PathLayer", data=path_data, pickable=True, get_color=[255, 75, 75], width_scale=20, width_min_pixels=2, get_path="path", get_width=5)
+                                r = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style='light')
+                                st.pydeck_chart(r)
+                            else:
+                                st.warning("Pas de données GPS.")
+    else:
+        st.info("Aucune activité trouvée.")
+
+with tab4:
+    st.write("Analyse globale depuis le **1er Septembre 2025**.")
+    if st.button("Lancer l'analyse Longue Durée"):
+        with st.spinner("Le coach analyse toute la saison..."):
+            try:
+                client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
+                
+                # Résumé pour l'IA
+                resume_sport = ""
+                total_km = 0
+                count_run = 0
+                count_velo = 0
+                
+                if activities:
+                    for act in activities:
+                        d_date = act['startTimeLocal'][:10]
+                        d_type = act['activityType']['typeKey']
+                        d_dist = act.get('distance', 0) / 1000
+                        d_time = act.get('duration', 0) // 60
+                        
+                        resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
+                        total_km += d_dist
+                        if "running" in str(d_type).lower(): count_run += 1
+                        if "cycling" in str(d_type).lower(): count_velo += 1
+
+                prompt = f"""
+                Tu es mon coach sportif personnel Alexis.
+                Données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
+                
+                HISTORIQUE (Sept 2025 à ce jour) :
+                STATS : {total_km:.1f} km total / {count_run} Runs / {count_velo} Vélo.
+                LISTE :
+                {resume_sport}
+                
+                MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
+                """
+                
+                # ICI : On utilise le modèle que vous avez trouvé
+                response = client_ai.models.generate_content(
+                    model="gemini-2.5-pro", 
+                    contents=prompt
+                )
+                st.markdown(response.text)
+                
+            except Exception as e:
+                st.error(f"Erreur IA: {e}")
