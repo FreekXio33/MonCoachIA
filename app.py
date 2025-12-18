@@ -20,7 +20,7 @@ hide_streamlit_style = """
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- FONCTIONS UTILITAIRES ---
+# --- UTILITAIRES ---
 def format_duration(seconds):
     if not seconds: return "--"
     h = int(seconds // 3600)
@@ -56,8 +56,10 @@ def get_global_data():
 
     try:
         today = date.today()
+        # 1. Résumé du jour
         stats_today = client.get_user_summary(today.isoformat())
         
+        # 2. Historique 7 jours (Pour les graphiques)
         data_list = []
         for i in range(6, -1, -1):
             d = today - timedelta(days=i)
@@ -70,15 +72,17 @@ def get_global_data():
             except:
                 continue
         
-        # On récupère les 5 dernières activités (juste le résumé)
-        activities = client.get_activities(0, 5)
+        # 3. HISTORIQUE LONG (Depuis le 1er Septembre 2025)
+        start_date = date(2025, 9, 1)
+        # On récupère toutes les activités entre le 1er sept et aujourd'hui
+        all_activities = client.get_activities_by_date(start_date.isoformat(), today.isoformat())
         
-        return stats_today, pd.DataFrame(data_list), activities, client
+        return stats_today, pd.DataFrame(data_list), all_activities, client
         
     except Exception as e:
         return None, str(e), None, None
 
-# --- FONCTION SPÉCIALE CARTE ---
+# --- FONCTION CARTE GPS ---
 def get_gps_data(client, activity_id):
     try:
         details = client.get_activity_details(activity_id)
@@ -93,10 +97,9 @@ def get_gps_data(client, activity_id):
     return None, None
 
 # --- CHARGEMENT ---
-# C'est ici que j'ai changé le titre !
 st.title("Hey Alexis !")
 
-with st.spinner('Analyse de ta forme...'):
+with st.spinner('Analyse de ton historique depuis Septembre...'):
     stats, df_history, activities, client = get_global_data()
 
 if isinstance(df_history, str):
@@ -135,10 +138,13 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
-    st.caption("Cliquez sur 'Voir le parcours' pour charger la carte GPS.")
+    st.caption("Vos 5 dernières séances (parmi tout l'historique)")
     
     if activities:
-        for act in activities:
+        # On affiche seulement les 5 premières pour ne pas saturer l'écran
+        recent_activities = activities[:5] 
+        
+        for act in recent_activities:
             nom = act['activityName']
             act_id = act['activityId']
             type_act = act['activityType']['typeKey']
@@ -157,38 +163,66 @@ with tab3:
                     if st.button(f"🗺️ Voir le parcours", key=f"btn_{act_id}"):
                         with st.spinner("Téléchargement du tracé GPS..."):
                             path_data, center = get_gps_data(client, act_id)
-                            
                             if path_data:
-                                view_state = pdk.ViewState(
-                                    latitude=center[1], longitude=center[0],
-                                    zoom=11, pitch=0
-                                )
-                                layer = pdk.Layer(
-                                    type="PathLayer",
-                                    data=path_data,
-                                    pickable=True,
-                                    get_color=[255, 75, 75],
-                                    width_scale=20,
-                                    width_min_pixels=2,
-                                    get_path="path",
-                                    get_width=5
-                                )
+                                view_state = pdk.ViewState(latitude=center[1], longitude=center[0], zoom=11, pitch=0)
+                                layer = pdk.Layer(type="PathLayer", data=path_data, pickable=True, get_color=[255, 75, 75], width_scale=20, width_min_pixels=2, get_path="path", get_width=5)
                                 r = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style='light')
                                 st.pydeck_chart(r)
                             else:
-                                st.warning("Pas de données GPS trouvées.")
-
+                                st.warning("Pas de données GPS.")
     else:
-        st.info("Aucune activité récente.")
+        st.info("Aucune activité trouvée depuis Septembre.")
 
 with tab4:
-    if st.button("Lancer l'analyse IA"):
-        with st.spinner("Analyse..."):
+    st.write("Le coach analyse ton activité globale depuis le **1er Septembre 2025**.")
+    if st.button("Lancer l'analyse Longue Durée"):
+        with st.spinner("Analyse de toute la saison..."):
             try:
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
-                last_act = activities[0] if activities else "Rien"
-                prompt = f"Coach sportif pour Alexis. Données: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}. Dernière activité: {last_act}. Conseil court."
+                
+                # --- PRÉPARATION DU RÉSUMÉ POUR L'IA ---
+                # On ne peut pas envoyer tout le texte brut (trop long), on résume
+                resume_sport = ""
+                total_km = 0
+                count_run = 0
+                count_velo = 0
+                
+                if activities:
+                    for act in activities:
+                        d_date = act['startTimeLocal'][:10]
+                        d_type = act['activityType']['typeKey']
+                        d_dist = act.get('distance', 0) / 1000
+                        d_time = act.get('duration', 0) // 60
+                        
+                        # On construit une ligne par activité
+                        resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
+                        
+                        # On calcule des totaux pour aider l'IA
+                        total_km += d_dist
+                        if "running" in str(d_type).lower(): count_run += 1
+                        if "cycling" in str(d_type).lower(): count_velo += 1
+
+                prompt = f"""
+                Tu es mon coach sportif personnel. Je m'appelle Alexis.
+                Voici mes données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
+                
+                Voici mon HISTORIQUE SPORTIF complet depuis le 1er Septembre 2025 :
+                {resume_sport}
+                
+                STATS GLOBALES DE LA PÉRIODE :
+                - Distance totale : {total_km:.1f} km
+                - Séances Running : {count_run}
+                - Séances Vélo : {count_velo}
+                
+                TA MISSION :
+                1. Analyse ma régularité depuis septembre. Est-ce que je progresse ou je ralentis ?
+                2. Analyse ma charge récente (cette semaine) par rapport à mon historique.
+                3. Donne un conseil précis pour aujourd'hui en prenant en compte ma forme du jour.
+                
+                Réponse structurée, motivante et directe.
+                """
+                
                 response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
-                st.info(response.text)
+                st.markdown(response.text)
             except Exception as e:
                 st.error(f"Erreur IA: {e}")
