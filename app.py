@@ -97,7 +97,6 @@ def get_gps_data(client, activity_id):
 
 # --- CHARGEMENT ---
 st.title("Hey Alexis !")
-
 with st.spinner('Analyse de ton historique depuis Septembre...'):
     stats, df_history, activities, client = get_global_data()
 
@@ -111,7 +110,7 @@ pas = stats.get('totalSteps', stats.get('dailySteps', 0))
 sommeil_sec = stats.get('sleepDurationInSeconds', stats.get('sleepingSeconds', 0))
 sommeil_txt = format_duration(sommeil_sec)
 stress = stats.get('averageStressLevel', '--')
-body_bat = stats.get('bodyBatteryMostRecentValue', stats.get('bodyBatteryMostRecentLevel', '--'))
+body_bat = stats.get('bodyBatteryMostRecentValue', stats.get('bodyBatteryMostRecentLevel', '--') )
 
 col1, col2 = st.columns(2)
 col1.metric("👣 Pas", pas)
@@ -174,6 +173,7 @@ with tab4:
     if st.button("Lancer l'analyse Longue Durée"):
         with st.spinner("Le coach analyse toute la saison..."):
             try:
+                # Utilisation du SDK Google GenAI (V2)
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
                 
                 # Résumé pour l'IA
@@ -206,7 +206,7 @@ with tab4:
                 MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
                 """
                 
-                # ICI : Retour au modèle Flash qui est "Illimité" (ou presque)
+                # REQUÊTE IA AVEC LE MODÈLE FLASH
                 response = client_ai.models.generate_content(
                     model="gemini-1.5-flash", 
                     contents=prompt
