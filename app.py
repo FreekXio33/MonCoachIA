@@ -59,7 +59,7 @@ def get_global_data():
         # 1. Résumé du jour
         stats_today = client.get_user_summary(today.isoformat())
         
-        # 2. Historique 7 jours (Pour les graphiques)
+        # 2. Historique 7 jours
         data_list = []
         for i in range(6, -1, -1):
             d = today - timedelta(days=i)
@@ -74,7 +74,6 @@ def get_global_data():
         
         # 3. HISTORIQUE LONG (Depuis le 1er Septembre 2025)
         start_date = date(2025, 9, 1)
-        # On récupère toutes les activités entre le 1er sept et aujourd'hui
         all_activities = client.get_activities_by_date(start_date.isoformat(), today.isoformat())
         
         return stats_today, pd.DataFrame(data_list), all_activities, client
@@ -139,11 +138,8 @@ with tab2:
 
 with tab3:
     st.caption("Vos 5 dernières séances (parmi tout l'historique)")
-    
     if activities:
-        # On affiche seulement les 5 premières pour ne pas saturer l'écran
         recent_activities = activities[:5] 
-        
         for act in recent_activities:
             nom = act['activityName']
             act_id = act['activityId']
@@ -171,7 +167,7 @@ with tab3:
                             else:
                                 st.warning("Pas de données GPS.")
     else:
-        st.info("Aucune activité trouvée depuis Septembre.")
+        st.info("Aucune activité trouvée.")
 
 with tab4:
     st.write("Le coach analyse ton activité globale depuis le **1er Septembre 2025**.")
@@ -180,8 +176,7 @@ with tab4:
             try:
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
                 
-                # --- PRÉPARATION DU RÉSUMÉ POUR L'IA ---
-                # On ne peut pas envoyer tout le texte brut (trop long), on résume
+                # Résumé pour l'IA
                 resume_sport = ""
                 total_km = 0
                 count_run = 0
@@ -194,10 +189,7 @@ with tab4:
                         d_dist = act.get('distance', 0) / 1000
                         d_time = act.get('duration', 0) // 60
                         
-                        # On construit une ligne par activité
                         resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
-                        
-                        # On calcule des totaux pour aider l'IA
                         total_km += d_dist
                         if "running" in str(d_type).lower(): count_run += 1
                         if "cycling" in str(d_type).lower(): count_velo += 1
@@ -206,23 +198,23 @@ with tab4:
                 Tu es mon coach sportif personnel. Je m'appelle Alexis.
                 Voici mes données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
                 
-                Voici mon HISTORIQUE SPORTIF complet depuis le 1er Septembre 2025 :
+                HISTORIQUE SPORTIF (Depuis Septembre 2025) :
+                STATS : {total_km:.1f} km total / {count_run} Runs / {count_velo} Vélo.
+                LISTE :
                 {resume_sport}
                 
-                STATS GLOBALES DE LA PÉRIODE :
-                - Distance totale : {total_km:.1f} km
-                - Séances Running : {count_run}
-                - Séances Vélo : {count_velo}
-                
                 TA MISSION :
-                1. Analyse ma régularité depuis septembre. Est-ce que je progresse ou je ralentis ?
-                2. Analyse ma charge récente (cette semaine) par rapport à mon historique.
-                3. Donne un conseil précis pour aujourd'hui en prenant en compte ma forme du jour.
-                
-                Réponse structurée, motivante et directe.
+                1. Analyse ma régularité et ma progression.
+                2. Analyse ma charge cette semaine.
+                3. Donne un conseil pour aujourd'hui.
+                Sois direct et motivant.
                 """
                 
-                response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
+                # CORRECTION ICI : Changement du nom du modèle
+                response = client_ai.models.generate_content(
+                    model="gemini-1.5-flash-latest", 
+                    contents=prompt
+                )
                 st.markdown(response.text)
             except Exception as e:
                 st.error(f"Erreur IA: {e}")
