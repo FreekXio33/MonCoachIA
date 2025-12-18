@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from garminconnect import Garmin
 from google import genai
 import pandas as pd
+import time
 
 st.set_page_config(page_title="Coach AI", page_icon="⚡", layout="centered")
 
@@ -21,12 +22,25 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # --- FONCTIONS ---
 @st.cache_data(ttl=3600)
 def get_data():
+    email = st.secrets["GARMIN_EMAIL"]
+    password = st.secrets["GARMIN_PASSWORD"]
+    
+    # --- MÉCANISME DE RECONNEXION (3 essais) ---
+    client = None
+    err = None
+    for i in range(3): # On essaie 3 fois
+        try:
+            client = Garmin(email, password)
+            client.login()
+            break # Si ça marche, on sort de la boucle !
+        except Exception as e:
+            err = e
+            time.sleep(3) # On attend 3 secondes avant de réessayer
+    
+    if client is None:
+        return None, f"Échec après 3 tentatives. Garmin bloque ou ne répond pas. ({err})"
+
     try:
-        email = st.secrets["GARMIN_EMAIL"]
-        password = st.secrets["GARMIN_PASSWORD"]
-        client = Garmin(email, password)
-        client.login()
-        
         today = date.today()
         stats_today = client.get_user_summary(today.isoformat())
         
@@ -37,10 +51,8 @@ def get_data():
             try:
                 day_data = client.get_user_summary(d_str)
                 
-                # --- SÉCURISATION DES DONNÉES ---
-                # Pas
+                # Récupération sécurisée
                 steps = day_data.get('totalSteps', 0) or day_data.get('dailySteps', 0) or 0
-                # Body Battery (Le correctif est ici !)
                 bb = day_data.get('bodyBatteryMostRecentValue', 0) or day_data.get('bodyBatteryMostRecentLevel', 0) or 0
                 
                 data_list.append({
@@ -59,15 +71,16 @@ def get_data():
 # --- APP ---
 st.title(f"⚡ Coach - {date.today().strftime('%d/%m')}")
 
-with st.spinner('Synchronisation...'):
+with st.spinner('Synchronisation (Tentative de connexion)...'):
     stats, df_history = get_data()
 
 if isinstance(df_history, str):
-    st.error(f"Erreur : {df_history}")
+    st.error(f"⚠️ {df_history}")
+    if "403" in df_history or "timeout" in df_history:
+        st.caption("Astuce : Garmin bloque parfois les serveurs Cloud. Essayez de recharger la page dans 1 minute.")
     st.stop()
 
 # --- AFFICHAGE DONNÉES DU JOUR ---
-
 # 1. Pas
 pas = stats.get('totalSteps', stats.get('dailySteps', 0))
 
@@ -83,7 +96,7 @@ else:
 # 3. Stress
 stress = stats.get('averageStressLevel', '--')
 
-# 4. Body Battery (CORRECTION ICI AUSSI)
+# 4. Body Battery
 body_bat = stats.get('bodyBatteryMostRecentValue', stats.get('bodyBatteryMostRecentLevel', '--'))
 
 # --- METRIQUES ---
@@ -109,7 +122,6 @@ with tab1:
 with tab2:
     if not df_history.empty:
         st.caption("Body Battery (Énergie)")
-        # On affiche la Body Battery en vert
         fig = px.line(df_history, x='Date', y='Body Battery', markers=True, color_discrete_sequence=['#2ecc71'])
         fig.update_layout(yaxis_range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
@@ -124,7 +136,3 @@ with tab3:
                 st.info(response.text)
             except Exception as e:
                 st.error(f"Erreur IA: {e}")
-
-# Je laisse le Debug au cas où, mais fermé par défaut
-with st.expander("🛠️ Debug Technique"):
-    st.json(stats)
