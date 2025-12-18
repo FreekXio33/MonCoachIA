@@ -1,6 +1,6 @@
 streamlit
 garminconnect
-google-genai
-matplotlib
-python-dotenv
 plotly
+pydeck
+pandas
+google-genai
