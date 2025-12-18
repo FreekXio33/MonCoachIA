@@ -172,7 +172,7 @@ with tab3:
 with tab4:
     st.write("Analyse globale depuis le **1er Septembre 2025**.")
     if st.button("Lancer l'analyse Longue Durée"):
-        with st.spinner("Le coach analyse toute la saison..."):
+        with st.spinner("Analyse de toute la saison..."):
             try:
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
                 
@@ -206,12 +206,25 @@ with tab4:
                 MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
                 """
                 
-                # ICI : On utilise le modèle que vous avez trouvé
+                # CORRECTION : On utilise une version numérotée très stable
                 response = client_ai.models.generate_content(
-                    model="gemini-2.5-pro", 
+                    model="gemini-1.5-flash-002", 
                     contents=prompt
                 )
                 st.markdown(response.text)
                 
             except Exception as e:
                 st.error(f"Erreur IA: {e}")
+
+# --- OUTIL DE DIAGNOSTIC ---
+# Si l'IA plante encore, ouvrez ce menu pour voir quel modèle est dispo
+with st.expander("🛠️ Debug IA (En cas d'erreur 404)"):
+    if st.button("Lister les modèles disponibles"):
+        try:
+            client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
+            models = client_ai.models.list()
+            st.write("Voici les noms exacts que vous avez le droit d'utiliser :")
+            for m in models:
+                st.code(m.name)
+        except Exception as e:
+            st.error(str(e))
