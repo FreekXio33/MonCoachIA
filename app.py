@@ -19,6 +19,19 @@ st.markdown("""
             </style>
             """, unsafe_allow_html=True)
 
+# --- VALEURS PAR DÉFAUT (Profil) ---
+# Astuce : Modifie ces valeurs ici pour ne pas avoir à les retaper à chaque redémarrage
+DEFAULT_FC_MAX = 190
+DEFAULT_FC_REPOS = 55
+DEFAULT_FTP = 200
+DEFAULT_POIDS = 75
+
+# --- INITIALISATION SESSION STATE (Mémoire) ---
+if 'fc_max' not in st.session_state: st.session_state.fc_max = DEFAULT_FC_MAX
+if 'fc_repos' not in st.session_state: st.session_state.fc_repos = DEFAULT_FC_REPOS
+if 'ftp' not in st.session_state: st.session_state.ftp = DEFAULT_FTP
+if 'poids' not in st.session_state: st.session_state.poids = DEFAULT_POIDS
+
 # --- IA ---
 try:
     api_key = st.secrets["GEMINI_KEY"]
@@ -100,8 +113,8 @@ c2.metric("🔋 Body Battery", bb)
 
 st.divider()
 
-# ONGLETS
-t1, t2, t3, t4, t5 = st.tabs(["Activités", "Santé", "Cartes", "Analyse", "📅 Créateur"])
+# --- ONGLETS (AJOUT DE 'PROFIL') ---
+t1, t2, t3, t4, t5, t6 = st.tabs(["Activités", "Santé", "Cartes", "Analyse", "📅 Créateur", "👤 Profil"])
 
 with t1:
     if not df.empty: st.plotly_chart(px.bar(df, x='Date', y='Pas'), use_container_width=True)
@@ -116,59 +129,68 @@ with t3:
                 p, c = get_gps(client, a['activityId'])
                 if p: st.pydeck_chart(pdk.Deck(layers=[pdk.Layer(type="PathLayer", data=p, get_color=[255,0,0], width_scale=20, get_path="path")], initial_view_state=pdk.ViewState(latitude=c[1], longitude=c[0], zoom=12)))
 
+# --- ONGLET PROFIL (CONFIGURATION) ---
+with t6:
+    st.header("👤 Tes Métriques")
+    st.caption("Ces valeurs sont envoyées à l'IA pour personnaliser tes zones.")
+    
+    col_p1, col_p2 = st.columns(2)
+    st.session_state.fc_max = col_p1.number_input("FC Max (bpm)", value=st.session_state.fc_max)
+    st.session_state.fc_repos = col_p2.number_input("FC Repos (bpm)", value=st.session_state.fc_repos)
+    
+    col_p3, col_p4 = st.columns(2)
+    st.session_state.ftp = col_p3.number_input("FTP Vélo (Watts)", value=st.session_state.ftp)
+    st.session_state.poids = col_p4.number_input("Poids (kg)", value=st.session_state.poids)
+    
+    st.info(f"✅ Zones estimées : Zone 2 (Endurance) = {int(st.session_state.fc_max * 0.65)}-{int(st.session_state.fc_max * 0.75)} bpm")
+
+# --- ANALYSE (AVEC PROFIL) ---
 with t4:
     if st.button("Analyser ma saison"):
         with st.spinner("Analyse..."):
             hist = "".join([f"- {a['startTimeLocal'][:10]}: {a['activityType']['typeKey']} ({a.get('distance',0)/1000:.1f}km)\n" for a in acts])
-            prompt = f"Coach sportif. Datas: BB={bb}, Pas={pas}. Historique:\n{hist}\nAnalyse charge et conseil."
+            
+            # Injection du profil dans le prompt
+            profil_str = f"PROFIL ATHLÈTE : FC Max={st.session_state.fc_max}, FC Repos={st.session_state.fc_repos}, FTP={st.session_state.ftp}W, Poids={st.session_state.poids}kg."
+            
+            prompt = f"Coach sportif. Datas: BB={bb}, Pas={pas}. {profil_str} Historique:\n{hist}\nAnalyse charge et conseil précis (base toi sur mes zones)."
             try: st.markdown(genai.GenerativeModel("models/gemini-2.5-flash").generate_content(prompt).text)
             except Exception as e: st.error(e)
 
-# --- NOUVEL ONGLET CRÉATEUR AVEC DATE ---
+# --- CRÉATEUR (AVEC PROFIL) ---
 with t5:
     st.header("📅 Planifier une séance")
     
-    # 1. LE SÉLECTEUR DE DATE
     c_date, c_sport = st.columns(2)
-    # Date par défaut = demain
     demain = date.today() + timedelta(days=1)
-    date_seance = c_date.date_input("Date de la séance", demain)
+    date_seance = c_date.date_input("Date", demain)
     sport = c_sport.selectbox("Sport", ["Course à pied", "Vélo", "Musculation"])
     
-    # 2. Paramètres
     c_duree, c_intensite = st.columns(2)
     duree = c_duree.slider("Durée (min)", 30, 180, 60, step=15)
-    
-    # Astuce : On récupère le jour de la semaine pour l'IA
-    jour_semaine = date_seance.strftime("%A") # Renvoie 'Monday', etc.
+    jour_semaine = date_seance.strftime("%A")
     
     if st.button("Générer la séance"):
-        with st.spinner(f"Création de la séance pour le {date_seance}..."):
+        with st.spinner(f"Création de la séance..."):
+            
+            # Injection du profil pour les zones
+            profil_str = f"MES MÉTRIQUES : FC Max={st.session_state.fc_max}, FTP={st.session_state.ftp}W."
             
             prompt = f"""
-            Agis comme un coach sportif expert.
+            Coach sportif expert.
+            CONTEXTE : Séance pour le {date_seance} ({jour_semaine}). Forme: {bb}/100.
+            {profil_str}
+            DEMANDE : {sport}, {duree} min.
             
-            CONTEXTE :
-            - Date prévue de la séance : {date_seance} (C'est un {jour_semaine}).
-            - Ma forme actuelle (Body Battery) : {bb}/100.
-            
-            DEMANDE :
-            - Sport : {sport}
-            - Durée : {duree} minutes.
-            
-            MISSION :
-            Crée une séance structurée adaptée à ma forme et au jour de la semaine.
-            IMPORTANT : Donne-moi la structure exacte (Échauffement / Corps / Retour au calme) de façon claire pour que je puisse la copier dans ma montre.
+            MISSION : Crée une séance structurée.
+            IMPORTANT : Affiche un TABLEAU Markdown : | Étape | Durée | Intensité | Détails |.
+            Dans 'Intensité', utilise mes valeurs (ex: '150 bpm' ou '200 Watts') au lieu de juste dire 'Zone 2'.
             """
             
             try:
                 model = genai.GenerativeModel("models/gemini-2.5-flash")
                 resp = model.generate_content(prompt)
-                
-                st.success(f"Séance planifiée pour le {date_seance}")
+                st.success(f"Séance du {date_seance}")
                 st.markdown(resp.text)
-                
-                st.info("💡 Pour mettre cette séance sur ta montre : Ouvre Garmin Connect > Entraînement > Créer > Copie les étapes ci-dessus.")
-                
             except Exception as e:
                 st.error(f"Erreur IA : {e}")
