@@ -170,47 +170,25 @@ with tab3:
         st.info("Aucune activité trouvée.")
 
 with tab4:
-    st.write("Analyse globale depuis le **1er Septembre 2025**.")
-    if st.button("Lancer l'analyse Longue Durée"):
-        with st.spinner("Le coach réfléchit..."):
+    st.header("🔍 Diagnostic IA")
+    
+    if st.button("Quels modèles sont disponibles pour ma clé ?"):
+        try:
+            st.info("Interrogation des serveurs Google en cours...")
             
-            # --- PRÉPARATION DU PROMPT ---
-            resume_sport = ""
-            total_km = 0
-            count_run = 0
+            # On demande la liste officielle
+            available_models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    available_models.append(m.name)
             
-            if activities:
-                # On prend un échantillon pour tester
-                for act in activities[:10]: 
-                    d_date = act['startTimeLocal'][:10]
-                    d_type = act['activityType']['typeKey']
-                    d_dist = act.get('distance', 0) / 1000
-                    resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km)\n"
-                    total_km += d_dist
-                    if "running" in str(d_type).lower(): count_run += 1
-
-            prompt = f"""
-            Tu es mon coach.
-            Données : Pas={pas}, Sommeil={sommeil_txt}.
-            Historique : {total_km:.1f} km total.
-            Activités : {resume_sport}
-            Conseil court ?
-            """
-
-            # --- DIAGNOSTIC DES ERREURS ---
-            try:
-                # Test direct du modèle Flash
-                st.info("Tentative de connexion avec Gemini 1.5 Flash...")
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt)
-                st.success("Succès !")
-                st.markdown(response.text)
-            except Exception as e:
-                # AFFICHER L'ERREUR RÉELLE
-                st.error(f"❌ ERREUR TECHNIQUE : {e}")
-                st.write("Détails pour le débogage :")
-                st.code(str(e))
+            if available_models:
+                st.success("✅ Connexion réussie ! Voici les noms exacts à utiliser :")
+                st.code("\n".join(available_models))
+                st.write("Copiez l'un de ces noms (de préférence celui qui contient 'flash') pour le mettre dans le code.")
+            else:
+                st.warning("Aucun modèle trouvé compatible avec generateContent.")
                 
-                # Test de la version installée
-                import google.generativeai as g
-                st.warning(f"Version de la librairie Google installée sur le serveur : {g.__version__}")
+        except Exception as e:
+            st.error(f"Erreur de connexion : {e}")
+            st.write("Vérifiez que votre clé API est bien une clé 'Google AI Studio' et non une clé 'Google Cloud Vertex' (qui nécessite une configuration différente).")
