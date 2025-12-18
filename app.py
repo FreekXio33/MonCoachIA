@@ -3,9 +3,10 @@ import plotly.express as px
 import pydeck as pdk
 from datetime import date, timedelta
 from garminconnect import Garmin
-from google import genai
+import google.generativeai as genai  # On utilise la librairie standard stable
 import pandas as pd
 import time
+import os
 
 st.set_page_config(page_title="Coach AI", page_icon="⚡", layout="centered")
 
@@ -19,6 +20,14 @@ hide_streamlit_style = """
             </style>
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# --- CONFIGURATION IA ---
+# On configure l'IA au début pour être sûr que ça charge
+try:
+    api_key = st.secrets["GEMINI_KEY"]
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error("Erreur de clé API. Vérifiez vos secrets Streamlit.")
 
 # --- UTILITAIRES ---
 def format_duration(seconds):
@@ -52,7 +61,7 @@ def get_global_data():
         except:
             time.sleep(3)
     
-    if client is None: return None, "Erreur connexion", None, None
+    if client is None: return None, "Erreur connexion Garmin", None, None
 
     try:
         today = date.today()
@@ -97,7 +106,7 @@ def get_gps_data(client, activity_id):
 
 # --- CHARGEMENT ---
 st.title("Hey Alexis !")
-with st.spinner('Analyse de ton historique depuis Septembre...'):
+with st.spinner('Synchronisation Garmin...'):
     stats, df_history, activities, client = get_global_data()
 
 if isinstance(df_history, str):
@@ -136,7 +145,7 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
-    st.caption("Vos 5 dernières séances (parmi tout l'historique)")
+    st.caption("Vos 5 dernières séances")
     if activities:
         recent_activities = activities[:5] 
         for act in recent_activities:
@@ -173,10 +182,7 @@ with tab4:
     if st.button("Lancer l'analyse Longue Durée"):
         with st.spinner("Le coach analyse toute la saison..."):
             try:
-                # Utilisation du SDK Google GenAI (V2)
-                client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
-                
-                # Résumé pour l'IA
+                # Préparation des données pour l'IA
                 resume_sport = ""
                 total_km = 0
                 count_run = 0
@@ -206,12 +212,11 @@ with tab4:
                 MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
                 """
                 
-                # REQUÊTE IA AVEC LE MODÈLE FLASH
-                response = client_ai.models.generate_content(
-                    model="gemini-1.5-flash", 
-                    contents=prompt
-                )
+                # APPEL IA (MÉTHODE STABLE)
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                response = model.generate_content(prompt)
+                
                 st.markdown(response.text)
                 
             except Exception as e:
-                st.error(f"Erreur IA: {e}")
+                st.error(f"Erreur IA détaillée : {e}")
