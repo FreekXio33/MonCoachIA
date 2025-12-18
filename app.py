@@ -78,18 +78,13 @@ def get_global_data():
     except Exception as e:
         return None, str(e), None, None
 
-# --- FONCTION SPÉCIALE CARTE (Appelée seulement au clic) ---
+# --- FONCTION SPÉCIALE CARTE ---
 def get_gps_data(client, activity_id):
     try:
-        # On demande les détails complets à Garmin
         details = client.get_activity_details(activity_id)
-        # On cherche la ligne GPS (Polyline)
         if 'geoPolylineDTO' in details and 'polyline' in details['geoPolylineDTO']:
             raw_points = details['geoPolylineDTO']['polyline']
-            # Pydeck veut du [Longitude, Latitude]
             path_data = [{"path": [[p['longitude'], p['latitude']] for p in raw_points]}]
-            
-            # On calcule le centre de la carte pour zoomer dessus
             mid_point = raw_points[len(raw_points)//2]
             center = [mid_point['longitude'], mid_point['latitude']]
             return path_data, center
@@ -98,9 +93,10 @@ def get_gps_data(client, activity_id):
     return None, None
 
 # --- CHARGEMENT ---
-st.title(f"⚡ Coach - {date.today().strftime('%d/%m')}")
+# C'est ici que j'ai changé le titre !
+st.title("Hey Alexis !")
 
-with st.spinner('Synchronisation...'):
+with st.spinner('Analyse de ta forme...'):
     stats, df_history, activities, client = get_global_data()
 
 if isinstance(df_history, str):
@@ -138,7 +134,6 @@ with tab2:
         fig.update_layout(yaxis_range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
 
-# --- ONGLET CARTES ---
 with tab3:
     st.caption("Cliquez sur 'Voir le parcours' pour charger la carte GPS.")
     
@@ -158,25 +153,21 @@ with tab3:
                 c2.metric("Distance", dist_km)
                 c3.metric("BPM", act.get('averageHR', '--'))
                 
-                # LE BOUTON MAGIQUE POUR LA CARTE
-                # On ne charge la carte que si c'est une activité GPS (pas de Yoga ou Muscu)
                 if act.get('distance', 0) > 0:
                     if st.button(f"🗺️ Voir le parcours", key=f"btn_{act_id}"):
                         with st.spinner("Téléchargement du tracé GPS..."):
                             path_data, center = get_gps_data(client, act_id)
                             
                             if path_data:
-                                # Configuration de la vue 3D
                                 view_state = pdk.ViewState(
                                     latitude=center[1], longitude=center[0],
                                     zoom=11, pitch=0
                                 )
-                                # Le Calque (Le trait rouge)
                                 layer = pdk.Layer(
                                     type="PathLayer",
                                     data=path_data,
                                     pickable=True,
-                                    get_color=[255, 75, 75], # Rouge Strava
+                                    get_color=[255, 75, 75],
                                     width_scale=20,
                                     width_min_pixels=2,
                                     get_path="path",
@@ -185,7 +176,7 @@ with tab3:
                                 r = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style='light')
                                 st.pydeck_chart(r)
                             else:
-                                st.warning("Pas de données GPS trouvées pour cette activité.")
+                                st.warning("Pas de données GPS trouvées.")
 
     else:
         st.info("Aucune activité récente.")
@@ -196,7 +187,7 @@ with tab4:
             try:
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
                 last_act = activities[0] if activities else "Rien"
-                prompt = f"Coach sportif. Données: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}. Dernière activité: {last_act}. Conseil court."
+                prompt = f"Coach sportif pour Alexis. Données: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}. Dernière activité: {last_act}. Conseil court."
                 response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
                 st.info(response.text)
             except Exception as e:
