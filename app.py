@@ -16,6 +16,8 @@ st.markdown("""
             footer {visibility: hidden;}
             header {visibility: hidden;}
             .stMetric {background-color: #f0f2f6; padding: 10px; border-radius: 10px;}
+            /* Petite amélioration pour les boutons de la liste */
+            .stButton button {width: 100%; text-align: left;}
             </style>
             """, unsafe_allow_html=True)
 
@@ -38,6 +40,8 @@ def get_activity_icon(type_key):
     if "running" in t: return "🏃"
     if "cycling" in t: return "🚴"
     if "swimming" in t: return "🏊"
+    if "walking" in t: return "🚶"
+    if "strength" in t: return "🏋️"
     return "🏅"
 
 # --- GARMIN (VERSION ROBUSTE) ---
@@ -60,7 +64,7 @@ def get_global_data():
     try:
         today = date.today()
         
-        # 2. Données de base (Ça marche toujours)
+        # 2. Données de base
         stats = client.get_user_summary(today.isoformat())
         
         data_list = []
@@ -77,30 +81,19 @@ def get_global_data():
         acts = client.get_activities_by_date(start.isoformat(), today.isoformat())
         
         # 3. RÉCUPÉRATION PROFIL (BLINDÉE)
-        # On met tout ça dans un try/except pour que l'app ne plante JAMAIS ici
         metrics = None
         try:
-            # On essaie de récupérer le profil utilisateur standard
-            # Cette méthode est plus stable que get_social_profile
             user_profile = client.get_user_profile()
-            
-            # Poids (souvent en grammes)
             weight_grams = user_profile.get('weight', 75000)
-            
-            # Pour la FC Max, c'est parfois dans les settings, parfois non
-            # On tente une valeur par défaut si non trouvée
             metrics = {
-                "fc_max": 190, # Valeur par défaut si non trouvée
+                "fc_max": 190, 
                 "fc_repos": 60,
                 "poids": weight_grams / 1000,
                 "ftp": 200,
                 "vo2_run": user_profile.get('vo2MaxRunning', 0)
             }
-            
-            # Si on arrive à choper le VO2 Max, c'est que la connexion profil fonctionne
         except Exception as e:
-            print(f"Info: Impossible de récupérer le profil détaillé ({e}). Passage en manuel.")
-            metrics = None # Ce n'est pas grave, on passera en manuel
+            metrics = None 
         
         return stats, pd.DataFrame(data_list), acts, client, metrics
         
@@ -139,21 +132,19 @@ c2.metric("🔋 Body Battery", bb)
 st.divider()
 
 # --- INITIALISATION SESSION ---
-# Si on a trouvé des infos Garmin, on écrase les valeurs. Sinon on garde l'existant.
 if metrics_garmin:
     if 'fc_max' not in st.session_state: st.session_state.fc_max = metrics_garmin['fc_max']
     if 'fc_repos' not in st.session_state: st.session_state.fc_repos = metrics_garmin['fc_repos']
     if 'poids' not in st.session_state: st.session_state.poids = metrics_garmin['poids']
     if 'ftp' not in st.session_state: st.session_state.ftp = metrics_garmin['ftp']
 else:
-    # Valeurs par défaut si Garmin échoue ou première visite
     if 'fc_max' not in st.session_state: st.session_state.fc_max = 190
     if 'fc_repos' not in st.session_state: st.session_state.fc_repos = 60
     if 'poids' not in st.session_state: st.session_state.poids = 75.0
     if 'ftp' not in st.session_state: st.session_state.ftp = 200
 
-# --- ONGLETS ---
-t1, t2, t3, t4, t5, t6 = st.tabs(["Activités", "Santé", "Cartes", "Analyse", "📅 Créateur", "👤 Profil"])
+# --- ONGLETS (MODIFIÉ ICI) ---
+t1, t2, t3, t4, t5, t6 = st.tabs(["Activités", "Santé", "Séances", "Analyse", "📅 Créateur", "👤 Profil"])
 
 with t1:
     if not df.empty: st.plotly_chart(px.bar(df, x='Date', y='Pas'), use_container_width=True)
@@ -161,20 +152,38 @@ with t1:
 with t2:
     if not df.empty: st.plotly_chart(px.line(df, x='Date', y='Body Battery'), use_container_width=True)
 
+# --- ONGLET SÉANCES (MODIFIÉ) ---
 with t3:
+    st.subheader("📜 Tes 10 dernières sorties")
+    st.caption("Clique sur une séance pour afficher la carte GPS (si disponible).")
+    
     if acts:
-        for a in acts[:3]:
-            if st.button(f"Carte : {a['activityName']}", key=a['activityId']):
-                p, c = get_gps(client, a['activityId'])
-                if p: st.pydeck_chart(pdk.Deck(layers=[pdk.Layer(type="PathLayer", data=p, get_color=[255,0,0], width_scale=20, get_path="path")], initial_view_state=pdk.ViewState(latitude=c[1], longitude=c[0], zoom=12)))
+        # On boucle sur les 10 premières activités (au lieu de 3)
+        for a in acts[:10]:
+            # Préparation des infos pour le bouton
+            nom = a['activityName']
+            date_str = a['startTimeLocal'][:10] # format YYYY-MM-DD
+            icon = get_activity_icon(a['activityType']['typeKey'])
+            
+            # Un bouton large qui affiche Date + Nom
+            if st.button(f"{icon} {date_str} : {nom}", key=a['activityId']):
+                with st.spinner("Chargement de la carte..."):
+                    p, c = get_gps(client, a['activityId'])
+                    if p: 
+                        st.pydeck_chart(pdk.Deck(layers=[pdk.Layer(type="PathLayer", data=p, get_color=[255,0,0], width_scale=20, get_path="path")], initial_view_state=pdk.ViewState(latitude=c[1], longitude=c[0], zoom=12)))
+                    else:
+                        st.warning("⚠️ Pas de tracé GPS disponible pour cette activité (ex: Musculation, Piscine intérieure ou erreur de synchro).")
+    else:
+        st.info("Aucune activité trouvée récemment.")
 
+# --- ONGLET PROFIL ---
 with t6:
     st.header("👤 Profil")
     if metrics_garmin:
         st.success("✅ Données synchronisées avec Garmin")
         if metrics_garmin.get('vo2_run'): st.caption(f"VO2 Max Run détectée : {metrics_garmin['vo2_run']}")
     else:
-        st.info("ℹ️ Mode Manuel (Données Garmin protégées ou inaccessibles)")
+        st.info("ℹ️ Mode Manuel")
 
     c_p1, c_p2 = st.columns(2)
     st.session_state.fc_max = c_p1.number_input("FC Max", value=st.session_state.fc_max)
