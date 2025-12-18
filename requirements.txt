@@ -3,3 +3,4 @@ garminconnect
 google-genai
 matplotlib
 python-dotenv
+plotly
