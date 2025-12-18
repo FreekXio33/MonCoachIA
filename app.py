@@ -170,7 +170,7 @@ with tab3:
         st.info("Aucune activité trouvée.")
 
 with tab4:
-    st.write("Le coach analyse ton activité globale depuis le **1er Septembre 2025**.")
+    st.write("Analyse globale depuis le **1er Septembre 2025**.")
     if st.button("Lancer l'analyse Longue Durée"):
         with st.spinner("Analyse de toute la saison..."):
             try:
@@ -195,26 +195,36 @@ with tab4:
                         if "cycling" in str(d_type).lower(): count_velo += 1
 
                 prompt = f"""
-                Tu es mon coach sportif personnel. Je m'appelle Alexis.
-                Voici mes données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
+                Tu es mon coach sportif personnel Alexis.
+                Données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
                 
-                HISTORIQUE SPORTIF (Depuis Septembre 2025) :
+                HISTORIQUE (Sept 2025 à ce jour) :
                 STATS : {total_km:.1f} km total / {count_run} Runs / {count_velo} Vélo.
                 LISTE :
                 {resume_sport}
                 
-                TA MISSION :
-                1. Analyse ma régularité et ma progression.
-                2. Analyse ma charge cette semaine.
-                3. Donne un conseil pour aujourd'hui.
-                Sois direct et motivant.
+                MISSION : Analyse régularité, progression et conseil du jour. Sois direct.
                 """
                 
-                # CORRECTION ICI : Changement du nom du modèle
+                # CORRECTION : On utilise une version numérotée très stable
                 response = client_ai.models.generate_content(
-                    model="gemini-1.5-flash-latest", 
+                    model="gemini-1.5-flash-002", 
                     contents=prompt
                 )
                 st.markdown(response.text)
+                
             except Exception as e:
                 st.error(f"Erreur IA: {e}")
+
+# --- OUTIL DE DIAGNOSTIC ---
+# Si l'IA plante encore, ouvrez ce menu pour voir quel modèle est dispo
+with st.expander("🛠️ Debug IA (En cas d'erreur 404)"):
+    if st.button("Lister les modèles disponibles"):
+        try:
+            client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
+            models = client_ai.models.list()
+            st.write("Voici les noms exacts que vous avez le droit d'utiliser :")
+            for m in models:
+                st.code(m.name)
+        except Exception as e:
+            st.error(str(e))
