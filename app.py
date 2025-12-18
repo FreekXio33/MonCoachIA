@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.express as px
+import pydeck as pdk
 from datetime import date, timedelta
 from garminconnect import Garmin
 from google import genai
@@ -28,23 +29,20 @@ def format_duration(seconds):
     return f"{m}m"
 
 def get_activity_icon(type_key):
-    # Petite fonction pour mettre un emoji sympa selon le sport
     type_key = str(type_key).lower()
     if "running" in type_key: return "🏃"
     if "cycling" in type_key: return "🚴"
     if "swimming" in type_key: return "🏊"
     if "walking" in type_key: return "🚶"
-    if "yoga" in type_key: return "🧘"
-    if "strength" in type_key: return "🏋️"
     return "🏅"
 
-# --- FONCTION DE RÉCUPÉRATION ---
+# --- CONNEXION ET DONNÉES ---
 @st.cache_data(ttl=3600)
-def get_data():
+def get_global_data():
     email = st.secrets["GARMIN_EMAIL"]
     password = st.secrets["GARMIN_PASSWORD"]
     
-    # Reconnexion Tenace (3 essais)
+    # Reconnexion Tenace
     client = None
     for i in range(3):
         try:
@@ -54,15 +52,12 @@ def get_data():
         except:
             time.sleep(3)
     
-    if client is None:
-        return None, "Connexion impossible", None
+    if client is None: return None, "Erreur connexion", None, None
 
     try:
         today = date.today()
-        # 1. Résumé du jour
         stats_today = client.get_user_summary(today.isoformat())
         
-        # 2. Historique 7 jours
         data_list = []
         for i in range(6, -1, -1):
             d = today - timedelta(days=i)
@@ -71,28 +66,42 @@ def get_data():
                 day_data = client.get_user_summary(d_str)
                 steps = day_data.get('totalSteps', 0) or day_data.get('dailySteps', 0) or 0
                 bb = day_data.get('bodyBatteryMostRecentValue', 0) or day_data.get('bodyBatteryMostRecentLevel', 0) or 0
-                data_list.append({
-                    "Date": d.strftime("%d/%m"),
-                    "Pas": steps,
-                    "Body Battery": bb
-                })
+                data_list.append({"Date": d.strftime("%d/%m"), "Pas": steps, "Body Battery": bb})
             except:
                 continue
         
-        # 3. Dernières Activités (NOUVEAU !)
-        # On récupère les 5 dernières (0 à 5)
+        # On récupère les 5 dernières activités (juste le résumé)
         activities = client.get_activities(0, 5)
-                
-        return stats_today, pd.DataFrame(data_list), activities
+        
+        return stats_today, pd.DataFrame(data_list), activities, client
         
     except Exception as e:
-        return None, str(e), None
+        return None, str(e), None, None
+
+# --- FONCTION SPÉCIALE CARTE (Appelée seulement au clic) ---
+def get_gps_data(client, activity_id):
+    try:
+        # On demande les détails complets à Garmin
+        details = client.get_activity_details(activity_id)
+        # On cherche la ligne GPS (Polyline)
+        if 'geoPolylineDTO' in details and 'polyline' in details['geoPolylineDTO']:
+            raw_points = details['geoPolylineDTO']['polyline']
+            # Pydeck veut du [Longitude, Latitude]
+            path_data = [{"path": [[p['longitude'], p['latitude']] for p in raw_points]}]
+            
+            # On calcule le centre de la carte pour zoomer dessus
+            mid_point = raw_points[len(raw_points)//2]
+            center = [mid_point['longitude'], mid_point['latitude']]
+            return path_data, center
+    except:
+        pass
+    return None, None
 
 # --- CHARGEMENT ---
 st.title(f"⚡ Coach - {date.today().strftime('%d/%m')}")
 
 with st.spinner('Synchronisation...'):
-    stats, df_history, activities = get_data()
+    stats, df_history, activities, client = get_global_data()
 
 if isinstance(df_history, str):
     st.error(f"⚠️ {df_history}")
@@ -116,8 +125,7 @@ col4.metric("🔋 Body Battery", body_bat)
 st.markdown("---")
 
 # --- ONGLETS ---
-# On ajoute l'onglet "Activités"
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Activité", "❤️ Santé", "🏅 Activités", "🤖 Coach"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Activité", "❤️ Santé", "🏅 Cartes & Sport", "🤖 Coach"])
 
 with tab1:
     if not df_history.empty:
@@ -130,49 +138,65 @@ with tab2:
         fig.update_layout(yaxis_range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
 
-# --- NOUVEL ONGLET ACTIVITÉS ---
+# --- ONGLET CARTES ---
 with tab3:
-    st.caption("Vos 5 dernières séances")
+    st.caption("Cliquez sur 'Voir le parcours' pour charger la carte GPS.")
     
     if activities:
         for act in activities:
-            # Récupération des infos de l'activité
             nom = act['activityName']
+            act_id = act['activityId']
             type_act = act['activityType']['typeKey']
-            date_start = act['startTimeLocal'][:10] # On garde juste la date YYYY-MM-DD
+            date_start = act['startTimeLocal'][:10]
             duree = format_duration(act['duration'])
-            dist_m = act.get('distance', 0)
-            
-            # Conversion distance (km)
-            dist_km = f"{dist_m / 1000:.2f} km" if dist_m else ""
-            
-            # Fréquence cardiaque moyenne de la séance
-            bpm = act.get('averageHR', '--')
-            
+            dist_km = f"{act.get('distance', 0) / 1000:.2f} km" if act.get('distance') else ""
             icon = get_activity_icon(type_act)
             
-            # Affichage sous forme de carte (Expander)
             with st.expander(f"{icon} {date_start} - {nom}"):
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Durée", duree)
-                if dist_m: c2.metric("Distance", dist_km)
-                c3.metric("BPM Moy", bpm)
+                c2.metric("Distance", dist_km)
+                c3.metric("BPM", act.get('averageHR', '--'))
+                
+                # LE BOUTON MAGIQUE POUR LA CARTE
+                # On ne charge la carte que si c'est une activité GPS (pas de Yoga ou Muscu)
+                if act.get('distance', 0) > 0:
+                    if st.button(f"🗺️ Voir le parcours", key=f"btn_{act_id}"):
+                        with st.spinner("Téléchargement du tracé GPS..."):
+                            path_data, center = get_gps_data(client, act_id)
+                            
+                            if path_data:
+                                # Configuration de la vue 3D
+                                view_state = pdk.ViewState(
+                                    latitude=center[1], longitude=center[0],
+                                    zoom=11, pitch=0
+                                )
+                                # Le Calque (Le trait rouge)
+                                layer = pdk.Layer(
+                                    type="PathLayer",
+                                    data=path_data,
+                                    pickable=True,
+                                    get_color=[255, 75, 75], # Rouge Strava
+                                    width_scale=20,
+                                    width_min_pixels=2,
+                                    get_path="path",
+                                    get_width=5
+                                )
+                                r = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style='light')
+                                st.pydeck_chart(r)
+                            else:
+                                st.warning("Pas de données GPS trouvées pour cette activité.")
+
     else:
-        st.info("Aucune activité récente trouvée.")
+        st.info("Aucune activité récente.")
 
 with tab4:
     if st.button("Lancer l'analyse IA"):
         with st.spinner("Analyse..."):
             try:
                 client_ai = genai.Client(api_key=st.secrets["GEMINI_KEY"])
-                # On ajoute les infos de la dernière activité pour le coach
-                last_act = activities[0] if activities else "Aucune activité récente"
-                prompt = f"""
-                Coach sportif.
-                Données jour: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
-                Dernière activité sportive: {last_act}.
-                Donne un conseil court.
-                """
+                last_act = activities[0] if activities else "Rien"
+                prompt = f"Coach sportif. Données: Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}. Dernière activité: {last_act}. Conseil court."
                 response = client_ai.models.generate_content(model="gemini-1.5-flash", contents=prompt)
                 st.info(response.text)
             except Exception as e:
