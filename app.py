@@ -178,46 +178,39 @@ with tab4:
             resume_sport = ""
             total_km = 0
             count_run = 0
-            count_velo = 0
             
             if activities:
-                # On limite aux 30 dernières activités pour ne pas saturer si le modèle Flash échoue
-                for act in activities[:30]: 
+                # On prend un échantillon pour tester
+                for act in activities[:10]: 
                     d_date = act['startTimeLocal'][:10]
                     d_type = act['activityType']['typeKey']
                     d_dist = act.get('distance', 0) / 1000
-                    d_time = act.get('duration', 0) // 60
-                    resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km / {d_time}min)\n"
+                    resume_sport += f"- {d_date}: {d_type} ({d_dist:.1f}km)\n"
                     total_km += d_dist
                     if "running" in str(d_type).lower(): count_run += 1
-                    if "cycling" in str(d_type).lower(): count_velo += 1
 
             prompt = f"""
-            Tu es mon coach sportif.
-            Données du JOUR : Pas={pas}, Sommeil={sommeil_txt}, Stress={stress}, BodyBattery={body_bat}.
-            HISTORIQUE RÉCENT : {total_km:.1f} km total / {count_run} Runs.
-            LISTE :
-            {resume_sport}
-            
-            Analyse ma forme actuelle et donne un conseil court.
+            Tu es mon coach.
+            Données : Pas={pas}, Sommeil={sommeil_txt}.
+            Historique : {total_km:.1f} km total.
+            Activités : {resume_sport}
+            Conseil court ?
             """
 
-            # --- LOGIQUE ANTI-ERREUR (FALLBACK) ---
-            model_names = ["gemini-1.5-flash", "gemini-pro"] # On tente Flash, sinon Pro
-            response_text = None
-            
-            for model_name in model_names:
-                try:
-                    model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(prompt)
-                    response_text = response.text
-                    st.success(f"Analyse générée avec le modèle : {model_name}")
-                    break # Si ça marche, on sort de la boucle
-                except Exception as e:
-                    print(f"Échec avec {model_name}: {e}")
-                    continue # Sinon on essaie le suivant
-            
-            if response_text:
-                st.markdown(response_text)
-            else:
-                st.error("Désolé, tous les modèles d'IA sont temporairement indisponibles.")
+            # --- DIAGNOSTIC DES ERREURS ---
+            try:
+                # Test direct du modèle Flash
+                st.info("Tentative de connexion avec Gemini 1.5 Flash...")
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt)
+                st.success("Succès !")
+                st.markdown(response.text)
+            except Exception as e:
+                # AFFICHER L'ERREUR RÉELLE
+                st.error(f"❌ ERREUR TECHNIQUE : {e}")
+                st.write("Détails pour le débogage :")
+                st.code(str(e))
+                
+                # Test de la version installée
+                import google.generativeai as g
+                st.warning(f"Version de la librairie Google installée sur le serveur : {g.__version__}")
